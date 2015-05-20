@@ -1,3 +1,7 @@
+"""
+Scraping game metadata from gamespot
+"""
+
 import urllib2
 from bs4 import BeautifulSoup
 import difflib

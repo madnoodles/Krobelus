@@ -1,3 +1,7 @@
+"""
+Scrape game price history given ITAD game id list
+"""
+
 from datetime import datetime
 import requests
 import pandas as pd
