@@ -16,7 +16,7 @@ price_file_path = 'samples/project_data/'
 file_names = listdir(price_file_path)
 
 
-def csv_to_dic(file):
+def csv_to_dic(file):    
     list = []
     with open(file) as csvfile:
         reader = csv.DictReader(csvfile)
