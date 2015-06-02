@@ -9,12 +9,15 @@ import json
 import grequests
 import requests
 import pandas as pd
+from dateutil.parser import parse
+from datetime import datetime
+import sys
 
 from utils.mongo_conn import get_mongo_connection
 
-#try fetch game link listing n times
-LIST_RETRIES = 0 # 
-
+# gamespot game listing is not stable among pages
+# thus try fetching game link listing n times
+LIST_RETRIES = 1 # 0 to not fetching at all
 
 client = get_mongo_connection('writer')
 db = client.game_data
@@ -27,9 +30,10 @@ def insert_mongo(col_name, data):
         print '-- nothing to insert'
     
 def main():
-    
     #url_base = "http://www.gamespot.com/new-games/?sort=score&game_filter_type%5Bplatform%5D=19&game_filter_type%5Bgenres%5D=&game_filter_type%5BminRating%5D=&game_filter_type%5BtimeFrame%5D=&game_filter_type%5BstartDate%5D=&game_filter_type%5BendDate%5D=&game_filter_type%5Btheme%5D=&game_filter_type%5Bregion%5D=&game_filter_type%5Bletter%5D=&page="
     
+    print '####'*10
+    print '## Gamespot populator FIRED! %s ##' % str(datetime.now())
     # url with release date filter (>2012)
     url_base = "http://www.gamespot.com/new-games/?sort=score&game_filter_type%5Bplatform%5D=&game_filter_type%5B" \
             + "genres%5D=&game_filter_type%5BminRating%5D=&game_filter_type%5BtimeFrame%5D=4&game_filter_type%5B" \
@@ -45,12 +49,10 @@ def main():
     print page_num_max , 'pages'
      
     all_pages = [url_base+str(i) for i in range(1,page_num_max+1)]
-    
-    all_game_links = []
-    with open('data/gs_game_link.txt', 'rU') as h:
-        all_game_links = json.loads(h.read())
+    all_game_links = db.gamespot.distinct('url')
+    new_game_links = []
     print len(all_game_links), 'saved links'
-    print 'Finding unsaved games'
+    print 'Finding new games'
     for i in range(LIST_RETRIES): 
         for response in grequests.map((grequests.get(u) for u in all_pages)):
             soup = BeautifulSoup(response.text)
@@ -58,20 +60,16 @@ def main():
             for l in game_links:
                 if l not in all_game_links:
                     all_game_links.append(l)
-        print '---Round %d:'%(i+1), len(all_game_links), 'games'
-    
-    with open('data/gs_game_link.txt', 'w') as h:
-        h.write(json.dumps(all_game_links))
-    
+                    new_game_links.append(l)
+        print '---Round %d:'%(i+1), len(new_game_links), 'new games found'
     all_items = []
     #obj = retrive_game_info_by_link(requests.get('http://www.gamespot.com/bloodborne/'))
     #obj = retrive_game_info_by_link(requests.get('http://www.gamespot.com/i-am-bread/'))
-    all_chunks = list(chunks(all_game_links, 50))
+    all_chunks = list(chunks(new_game_links, 50))
     for index, chunk in enumerate(all_chunks):
         print '##### Processing chunk ', index, 'out of', len(all_chunks)
         items = []
         for response in grequests.map((grequests.get(u) for u in chunk)):
-        #for i,l in enumerate(all_game_links):
             print '-- returned: %s' %(response.url)
             try:
                 items.append(retrive_game_info_by_link(response))
@@ -83,8 +81,7 @@ def main():
         all_items+=items
         insert_mongo('gamespot', items)
         
-    pd.DataFrame(all_items).to_csv('test.csv')
-    #import ipdb; ipdb.set_trace()
+    client.close()
 
 def chunks(l, n):
     """ Yield successive n-sized chunks from l.
@@ -96,19 +93,21 @@ def retrive_game_info_by_link(response):
     #response = urllib2.urlopen(link)
     soup = BeautifulSoup(response.text)
     r = soup.find("div", {"id": "object-stats-wrap"})
- 
     #date published
-    date_published = r.find('dd', {'class':'pod-objectStats-info__release'}).find('span').text    
+    date_published = r.find('dd', {'class':'pod-objectStats-info__release'}).find('span').text   
+    release_date = None # release date as datetime 
+    try:
+        release_date = parse(date_published) 
+    except:
+        pass
     #system
     systems = [i.text for i in r.find_all('li', {'class':'system'})]
     #title
     name = r.find('a',  {'data-event-tracking':'Tracking|games_overview|GameStats|Title'}).find(text=True).split('\n')[0]
-    
     # game img link
     img_link = soup.find('div', {'class':'gameObject__img'}).find('img').get('src')
     # device platforms
     platforms = [span.text for span in soup.find('ul', {'class':'system-list'}).findAll('span')]
-    
     #gs score
     #score = r.find('div', {'class':'gs-score__cell'}).text.strip()
     score = soup.find('div', {'class':'gs-score__cell'}).text.strip()
@@ -133,30 +132,28 @@ def retrive_game_info_by_link(response):
         meta_score = float(meta_score)
     except ValueError:
         meta_score = None
-    
     # developer
     pattern = re.compile('Developer+')
     developer = [i.text for i in r.find_all('a', {'data-event-tracking':pattern})]
- 
     # publisher
     pattern = re.compile('Publisher+')
     publisher = [i.text for i in r.find_all('a', {'data-event-tracking':pattern})]
- 
     # genre
     pattern = re.compile('Genre+')
     genre = [i.text for i in r.find_all('a', {'data-event-tracking':pattern})]
- 
     # theme
     pattern = re.compile('Theme+')
     theme = [i.text for i in r.find_all('a', {'data-event-tracking':pattern})]
     
     return {
         "name":name,
+        'itad_id': '-', # IsThereAnyDeal ID
         'url':response.url,
         'img_url': img_link,
         'platforms': platforms,
         "systems":systems,
         "date_published":date_published,
+        'release_date': release_date,
         "score":score,
         'meta_score': meta_score,
         "user_review_score":user_review_score,
@@ -169,4 +166,6 @@ def retrive_game_info_by_link(response):
  
 
 if __name__ == '__main__':
+    if len(sys.argv) == 2:
+        LIST_RETRIES = int(sys.argv[1])
     main()
