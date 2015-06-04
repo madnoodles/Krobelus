@@ -1,55 +1,75 @@
 import dateutil
 import requests
+import grequests
 import pandas as pd
 from datetime import datetime
+from dateutil.parser import parse
 import execjs # for executing javascript
+import re
+
+from utils.mongo_conn import get_mongo_connection
+from utils.utils import chunks
+
+client = get_mongo_connection('writer')
+db = client.game_data
+col_gamespot = db.gamespot
+col_price = db.price_hist
 
 def main():
-
-    h = open('samples/game_ids_full.txt', 'rU')
-    # create a map of {game_spot_title: itad_id}
-    name_id_map = {}
-    for line in h:
-        l = line.split(',')
-        id = l[0].strip()
-        title = ','.join(l[1:]).strip()
-        # use the first id
-        name_id_map[title] = name_id_map.get(title, id)
+    st = datetime.now()
+    print '#####'*5
+    print 'Game Price History Populator FIRED at', st
+    print '#####'*5 
+    # get all games with ITAD id
+    # '-' is not processed game
+    # 'not_found' is processed but no ID 
+    # (no price history or not applicable, like ps4 exclusive)
+    data = list(col_gamespot.find({'itad_id':{'$nin':['-', 'not_found']}}))
+    print '#### Scraping price for %d games' % len(data)
     
-    # gamespot metadata df clean up
-    df_gs = pd.read_csv('samples/games.csv')
-    def clean_date(dd):
-        try:
-            dd = dateutil.parser.parse(dd)
-        except ValueError:
-            print dd
-            dd = datetime(2001,1,1)
-        return dd
-    df_gs['date_published'] = df_gs['date_published'].apply(clean_date)
-    # apply game id mapping
-    df_gs['game_id'] = df_gs.name.apply(lambda d:name_id_map.get(d, '-'))
+    base_price_url = 'http://isthereanydeal.com/ajax/game/price?plain=%s' 
     
-    # sort columns and generated a colum
-    start_header = [ 'name', 'game_id', 'date_published']
-    df_gs = df_gs[start_header + [c for c in df_gs.columns if c not in start_header]]
-    df_gs.to_csv('games_with_id.csv')
+    urls = []
+    refs = {}
+    for row in data:
+        refs[row['itad_id']] = row
+        urls.append(base_price_url%row['itad_id'])
     
-    # prepare to run price scraping script
-    # filter for only games with id and publish date > 2012-01-01
-    df_gs = df_gs[df_gs['game_id']!='-']
-    df_gs = df_gs[df_gs['date_published']>datetime(2012, 1, 1)]
-    
-    for id in df_gs.game_id.unique():
-        grab_price_history(id)
+    all_chunks = list(chunks(urls, 50))
+    for index, chunk in enumerate(all_chunks):
+        print '##### Processing chunk ', index, 'out of', len(all_chunks)
+        for response in grequests.map((grequests.get(u) for u in chunk)):
+            meta = refs.get(response.url.split('=')[-1],{})
+            game_nm = meta.get('name')
+            try:
+                df = grab_price_history(response)
+                df = df[[col for col in df.columns if col not in ['certainty', 'emphasis']]]
+                df.columns = [re.sub('[^A-Za-z0-9]+', '', col).lower() for col in df.columns]
+                df['date']= df.date.apply(lambda d:parse(d))
+                data = [v for k,v in df.T.to_dict().iteritems()]
+                set_q = meta
+                set_q['price_history'] = data
+                col_price.update({'_id':meta['_id']},
+                                 {'$set': set_q}, 
+                                 upsert=True)
+                print '[SUCCESS] Upserted: %s' % game_nm
+            except Exception, e:
+                with open('gen_price_error_log', 'a') as h:
+                    print '[ERROR]' + game_nm + '\t' + str(e) 
+                    h.write(game_nm + '\t' + str(e) + '\n')
+                continue
+    print '######## END ##########'
+    print 'Run time: %s' % str(datetime.now()-st)
+    #for id in df_gs.game_id.unique():
+    #    grab_price_history(id)
     
     #import ipdb; ipdb.set_trace()
     pass
 
-def grab_price_history(id):
-    print 'Processing: ', id 
-    url = 'http://isthereanydeal.com/ajax/game/price?plain=%s' % id
+    client.close()
 
-    response = requests.get(url)
+def grab_price_history(response):
+    """Callback to parse out price history data"""
     cols = ''
     rows = ''
     # find js code lines with data
@@ -69,8 +89,7 @@ def grab_price_history(id):
     df = pd.DataFrame(rows)
     df.columns = cols
 
-    df.to_csv('price_data/%s.csv' %id)    
-    print ' ---', id, 'completed'
+    return df
 
 if __name__ == '__main__':
     main()

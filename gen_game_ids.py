@@ -25,8 +25,8 @@ db = client.game_data
 col = db.gamespot
 
 def main():
-
-    #df = pd.read_csv('games.csv')
+    
+    # get all new games (itad_id=='-', haven't processed ITAD ID)
     data = list(col.find({'itad_id':'-'}))
     
     pool_num = 8

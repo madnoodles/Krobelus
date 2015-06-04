@@ -14,6 +14,7 @@ from datetime import datetime
 import sys
 
 from utils.mongo_conn import get_mongo_connection
+from utils.utils import chunks
 
 # gamespot game listing is not stable among pages
 # thus try fetching game link listing n times
@@ -83,12 +84,6 @@ def main():
         
     client.close()
 
-def chunks(l, n):
-    """ Yield successive n-sized chunks from l.
-    """
-    for i in xrange(0, len(l), n):
-        yield l[i:i+n]
- 
 def retrive_game_info_by_link(response):
     #response = urllib2.urlopen(link)
     soup = BeautifulSoup(response.text)
