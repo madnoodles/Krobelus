@@ -54,6 +54,7 @@ def main():
     new_game_links = []
     print len(all_game_links), 'saved links'
     print 'Finding new games'
+    import ipdb; ipdb.set_trace()
     for i in range(LIST_RETRIES): 
         for response in grequests.map((grequests.get(u) for u in all_pages)):
             soup = BeautifulSoup(response.text)

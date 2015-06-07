@@ -4,6 +4,7 @@ from numpy import nan
 import pandas as pd
 import math
 import re
+from optparse import OptionParser
 
 from utils.mongo_conn import get_mongo_connection
 
@@ -28,8 +29,29 @@ col_data = db.model_data
 
 
 def main():
+    
+    parser = OptionParser()
+    parser.add_option("-m", "--mode", dest="mode", default='dataset',
+                      help="mode: dataset|price. 'dataset' mode generates prod model data(binary vars)." \
+                      + " 'price' mode generate by week price listing for debugging.",)
+    parser.add_option("-s", "--sample_num",
+                      dest="sample_num", default=999999999,
+                      help="whether to sample first n rows")
+    parser.add_option("-v", "--verbose", action="store_true",
+                      dest="verbose", default=False,
+                      help="verbosity")
+    
+    (options, args) = parser.parse_args()
+    sample_num = int(options.sample_num)
+    verbose = options.verbose
+    mode = options.mode
+    
     print '#####'*10
     print 'Model Data Builer FIRED! ', datetime.now()
+    if mode == 'price':
+        print '-- generating price history listing (for qa/debugging), export csv'
+    elif mode == 'dataset':
+        print '-- generating model dataset (price hist converted to binary var), insert to mongo'
     print '#####'*10
     
     st = datetime.now()
@@ -47,7 +69,8 @@ def main():
     print 'genres:'
     print top_genres[:5]
     print '...'
-    print 'Fetching and clean up all game price history and metadata..'
+    print '----'*10
+    print 'Fetching and clean up game price history and metadata..'
     """
     vendors = {}
     for v in data:
@@ -58,42 +81,53 @@ def main():
     """
     print 'Excluding following vendors:'
     print exclude_vendors
-
+    print '----'*10
+    #rows = []
     pieces = []
+    count = 0
     for row in col_price.find():
-        result = clean_up_sales_data(row, [g['_id'] for g in top_genres])
+        #rows.append(row)
+        # iterate through mongo records and parse data
+        result = clean_up_sales_data(row, [g['_id'] for g in top_genres],
+                                     mode, verbose)
         pieces.append(result)
+        count += 1
+        if count == sample_num:
+            break
+    if mode == 'dataset':
+        # generating model dataset (price history converted to binary vars)
+        df = pd.DataFrame(pieces)
+        genre_cols = [c for c in df.columns if 'genre' in c]
+        discount_cols = [c for c in df.columns if 'dsct' in c and c != 'dsct_propensity']
+        all_metadata =  [c for c in df.columns if c not in genre_cols and c not in discount_cols]
+        dataset = df[all_metadata + discount_cols + genre_cols]
+        print '----'*10
+        print '-- generating ./samples/sample_model_dataset.csv'
+        dataset.to_csv('./samples/sample_model_dataset.csv')
+    elif mode == 'price':
+        # generating price history sheet
+        # good for QA/debugging
+        print '----'*10
+        print '-- generating ./samples/sample_prices.csv'
+        pd.concat(pieces).to_csv('./samples/sample_prices.csv')
     
-    df = pd.DataFrame(pieces)
-    #print 'Complete Cleanning'
-    #pd.concat(pieces).to_csv('sample.csv')
-    
-    
-    
-    
-    # sorting the cols
-    genre_cols = [c for c in df.columns if 'genre' in c]
-    discount_cols = [c for c in df.columns if 'dsct' in c and c != 'dsct_propensity']
-    all_metadata =  [c for c in df.columns if c not in genre_cols and c not in discount_cols]
-    dataset = df[all_metadata + discount_cols + genre_cols]
-    dataset.to_csv('sample_dataset.csv')
-    import ipdb; ipdb.set_trace()
-    print str(datetime.now()-st)
+    print '---'*10
+    print 'Run time:', str(datetime.now()-st)
     
     pass
 
 
-def clean_up_sales_data(game_data, genres):
+def clean_up_sales_data(game_data, genres, 
+                        mode='dataset', verbose=False):
     """
-    Given a game, parse data, 
-    - convert price history to | weeks_from_release | price | pct_off | format
-    - along with other metadata
-    - good base data for converting to discrete vars, or charting price trend
+    Parse game data
     
+    |price| mode cleans price data (merge vendors, group by week, etc)
+    |dataset| mode further converts price data to binary vars
     """
     name = game_data['name']
     release_date = game_data['release_date']
-    publisher = ','.join(game_data['publisher'])
+    publisher_str = ','.join(game_data['publisher'])
     try:
         score = float(game_data['score'])
     except TypeError:
@@ -107,27 +141,30 @@ def clean_up_sales_data(game_data, genres):
     except TypeError:
         user_review_score = nan
     #developer = game_data['developer']
-    #genre = ','.join(game_data['genre'])
+    genre_str = ','.join(game_data['genre'])
+    platform_str = ','.join(game_data['platforms'])
     #theme = game_data['theme']
     
     obj = {
         'name': name,
+        'itad_id': game_data['itad_id'],
         'release_date':release_date,
         'release_price': 0,
         'score':score,
         'meta_score':meta_score,
         'user_review_score':user_review_score,
         'publisher':game_data['publisher'],
-        'platform':game_data['platform'],
+        'platform':game_data['platforms'],
         #'developer':game_data['developer'],
         'dsct_propensity': 0,
         'genre':game_data['genre'],
     }
     
     df = pd.DataFrame(game_data['price_history'])
-    print 'Processing %s, %s, %d records' % (game_data['name'], 
-                                             str(release_date.strftime('%Y-%m-%d')),
-                                             len(df))
+    if verbose:
+        print 'Processing %s, %s, %d records' % (game_data['name'], 
+                                                 str(release_date.strftime('%Y-%m-%d')),
+                                                 len(df))
     # clean columns, exclude foreign vendors
     df = df[[c for c in df.columns if c not in exclude_vendors]]
     # Assume max price on release day is original price
@@ -159,54 +196,52 @@ def clean_up_sales_data(game_data, genres):
     # add sales pct (maybe negative value is original_price is wrong)
     agg['pct_off'] = agg.price.apply(lambda d: (original_price-d)/original_price)
     
-    for g in genres:
-        has_genre = 0
-        if g in game_data['genre']:
-            has_genre = 1
-        obj['genre_'+re.sub('[^A-Za-z0-9]', '', g.lower())] = has_genre
-    
-    # create a field for each sales tier
-    for k,row in agg.iterrows():
-        for sales_tier in sales_tiers:
-            tier_name, start_week, end_week, lower, upper = sales_tier
-            is_true = obj.get(tier_name, 0)
-            # if condition already satisfied (e.g. at first week)
-            if is_true: 
-                continue 
-            if (row['weeks_from_release']>=start_week and
-                row['weeks_from_release']<=end_week and
-                row['pct_off']>=lower and
-                row['pct_off']<=upper):
-                obj[tier_name] = 1
-            else:
-                obj[tier_name] = 0
-        #experimental discount score
-        if row['weeks_from_release']>0:
-            obj['dsct_propensity'] += math.fabs(row['pct_off']*1.0/row['weeks_from_release'])
-    return obj
-    """
-    # metadata
-    agg['game'] = game_data['name']
-    agg['release_date'] = release_date
-    agg['release_price'] = original_price
-    agg['pub_date'] = release_date
-    agg['publisher'] =publisher
-    agg['score'] = score
-    agg['meta_score'] = meta_score
-    agg['user_review_score'] = user_review_score
-    #agg['developer'] = developer
-    agg['genre'] = genre
-    #agg['theme'] = theme
-    
-    #if name =='Alien: Isolation':
-    #    import ipdb; ipdb.set_trace()
-    # sort columns
-    leading_fields = ['game', 'weeks_from_release', 'price', 'pct_off']
-    agg = agg[leading_fields + [c for c in agg.columns if c not in leading_fields]]
-    
-    return agg
-    """
-
+    if mode == 'dataset':
+        for g in genres:
+            has_genre = 0
+            if g in game_data['genre']:
+                has_genre = 1
+            obj['genre_'+re.sub('[^A-Za-z0-9]', '', g.lower())] = has_genre
+        
+        # create a field for each sales tier
+        for k,row in agg.iterrows():
+            for sales_tier in sales_tiers:
+                tier_name, start_week, end_week, lower, upper = sales_tier
+                is_true = obj.get(tier_name, 0)
+                # if condition already satisfied (e.g. at first week)
+                if is_true: 
+                    continue 
+                if (row['weeks_from_release']>=start_week and
+                    row['weeks_from_release']<=end_week and
+                    row['pct_off']>=lower and
+                    row['pct_off']<=upper):
+                    obj[tier_name] = 1
+                else:
+                    obj[tier_name] = 0
+            #experimental discount score
+            if row['weeks_from_release']>0:
+                obj['dsct_propensity'] += math.fabs(row['pct_off']*1.0/row['weeks_from_release'])
+        return obj
+    elif mode == 'price':
+        # metadata
+        agg['game'] = game_data['name']
+        agg['release_date'] = release_date
+        agg['itad_id'] = game_data['itad_id']
+        agg['platform'] = platform_str
+        agg['release_price'] = original_price
+        agg['pub_date'] = release_date
+        agg['publisher'] = publisher_str
+        agg['score'] = score
+        agg['meta_score'] = meta_score
+        agg['user_review_score'] = user_review_score
+        #agg['developer'] = developer
+        agg['genre'] = genre_str
+        #agg['theme'] = theme
+        
+        leading_fields = ['game', 'weeks_from_release', 'price', 'pct_off']
+        agg = agg[leading_fields + [c for c in agg.columns if c not in leading_fields]]
+        
+        return agg
 
 
 if __name__ == '__main__':
