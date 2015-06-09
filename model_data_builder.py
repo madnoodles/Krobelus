@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.parser import parse
 from numpy import nan
 import pandas as pd
@@ -7,6 +7,11 @@ import re
 from optparse import OptionParser
 
 from utils.mongo_conn import get_mongo_connection
+
+# only include games release at lease N days ago
+RECENT_RELEASE_MIN_DAYS = 60
+# ignore games without sufficient starting data
+MAX_MISS_STARTING_DAYS = 40
 
 # exclude foreign vendors
 exclude_vendors = ('nuuvem', 'gamesplanetuk', 
@@ -85,7 +90,9 @@ def main():
     #rows = []
     pieces = []
     count = 0
-    for row in col_price.find():
+    # only include record released for at least 2 months
+    date_threshold = datetime.now()-timedelta(days=RECENT_RELEASE_MIN_DAYS)
+    for row in col_price.find({'release_date':{'$lte': date_threshold}}):
         #rows.append(row)
         # iterate through mongo records and parse data
         result = clean_up_sales_data(row, [g['_id'] for g in top_genres],
@@ -94,9 +101,11 @@ def main():
         count += 1
         if count == sample_num:
             break
+    pieces = [p for p in pieces if p]
     if mode == 'dataset':
         # generating model dataset (price history converted to binary vars)
         df = pd.DataFrame(pieces)
+        
         genre_cols = [c for c in df.columns if 'genre' in c]
         discount_cols = [c for c in df.columns if 'dsct' in c and c != 'dsct_propensity']
         all_metadata =  [c for c in df.columns if c not in genre_cols and c not in discount_cols]
@@ -114,7 +123,7 @@ def main():
     print '---'*10
     print 'Run time:', str(datetime.now()-st)
     
-    pass
+    return
 
 
 def clean_up_sales_data(game_data, genres, 
@@ -180,6 +189,9 @@ def clean_up_sales_data(game_data, genres,
         for k,row in df.set_index('date').iterrows():
             cur_max_price = max(row.values)
             if cur_max_price>0:
+                if (k-release_date).days>MAX_MISS_STARTING_DAYS:
+                    print '-- [IGNORED] insufficient starting data for: %s ' % name
+                    return
                 original_price = cur_max_price
                 break
     obj['release_price'] = original_price
