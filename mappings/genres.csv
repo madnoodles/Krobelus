@@ -1,6 +1,6 @@
 genre,genre_standard,count
-Action,Action/Adventure/Survival,263
-Adventure,Action/Adventure/Survival,116
+Action,Action,263
+Adventure,Adventure,116
 3D,3D,105
 Shooter,Shooter,69
 Strategy,Strategy/Tactical,63
@@ -13,7 +13,7 @@ Simulation,Simulation,27
 Open-World,Open-World,26
 Real-Time,Real-Time,20
 Third-Person,Third-Person,20
-Driving/Racing,Sports,18
+Driving/Racing,Driving/Racing,18
 Puzzle,Puzzle,14
 Sports,Sports,10
 Tactical,Strategy/Tactical,10
@@ -22,7 +22,7 @@ Turn-Based,Turn-Based,9
 MMO,MMO,9
 Roguelike,RPG,6
 Management,Management,6
-Survival,Action/Adventure/Survival,6
+Survival,Survival,6
 MOBA,MOBA,5
 Beat-'Em-Up,Fighting,5
 Miscellaneous,Other,5
@@ -44,3 +44,4 @@ On-Rails,Shooter,1
 Hidden Object,Puzzle,1
 Wrestling,Sports,1
 Party/Minigame,Other,1
+Snowboarding/Skiing,Sports,

@@ -32,6 +32,8 @@ db = client.game_data
 col_price = db.price_hist
 col_data = db.model_data
 
+df = pd.read_csv('./mappings/genres.csv')
+genre_map = df.set_index('genre').genre_standard.T.to_dict()
 
 def main():
     
@@ -73,6 +75,17 @@ def main():
                          ]))
     print 'genres:'
     print top_genres[:5]
+    # apply standard genre name mapping
+    # get distinct list and print out not mapped 
+    distinct_genres = []
+    for row in top_genres:
+        g = row['_id']
+        g_standard = genre_map.get(g)
+        if not g_standard:
+            print '-- Undefined genre: %s' % g
+            g_standard = 'Other'
+        if g_standard not in distinct_genres:
+            distinct_genres.append(g_standard)
     print '...'
     print '----'*10
     print 'Fetching and clean up game price history and metadata..'
@@ -95,7 +108,7 @@ def main():
     for row in col_price.find({'release_date':{'$lte': date_threshold}}):
         #rows.append(row)
         # iterate through mongo records and parse data
-        result = clean_up_sales_data(row, [g['_id'] for g in top_genres],
+        result = clean_up_sales_data(row, distinct_genres,
                                      mode, verbose)
         pieces.append(result)
         count += 1
@@ -211,7 +224,7 @@ def clean_up_sales_data(game_data, genres,
     if mode == 'dataset':
         for g in genres:
             has_genre = 0
-            if g in game_data['genre']:
+            if g in [genre_map.get(gr, 'Other') for gr in game_data['genre']]:
                 has_genre = 1
             obj['genre_'+re.sub('[^A-Za-z0-9]', '', g.lower())] = has_genre
         
