@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from dateutil.parser import parse
 from numpy import nan
+import numpy as np
 import pandas as pd
 import math
 import json
@@ -50,9 +51,14 @@ def main():
     parser.add_option("-v", "--verbose", action="store_true",
                       dest="verbose", default=False,
                       help="verbosity")
+    parser.add_option('--vendor',
+                      dest='vendor_name', 
+                      default=False,
+                      help = "filter by vendor")
     
     (options, args) = parser.parse_args()
     sample_num = int(options.sample_num)
+    vendor_name = options.vendor_name
     verbose = options.verbose
     mode = options.mode
     
@@ -108,11 +114,16 @@ def main():
     count = 0
     # only include record released for at least 2 months
     date_threshold = datetime.now()-timedelta(days=RECENT_RELEASE_MIN_DAYS)
-    for row in col_price.find({'release_date':{'$lte': date_threshold}}):
+
+    if vendor_name != False:
+        collections = col_price.find({'price_history':{'$elemMatch': {vendor_name: {'$gte':0}}}, 'release_date':{'$lte': date_threshold}})
+    else:
+        collections = col_price.find({'release_date':{'$lte': date_threshold}})
+    for row in collections:
         #rows.append(row)
         # iterate through mongo records and parse data
         result = clean_up_sales_data(row, distinct_genres,
-                                     mode, verbose)
+                                     mode, verbose, vendor_name)
         pieces.append(result)
         count += 1
         if count == sample_num:
@@ -144,7 +155,7 @@ def main():
 
 
 def clean_up_sales_data(game_data, genres, 
-                        mode='dataset', verbose=False):
+                        mode='dataset', verbose=False, vendor_name=False):
     """
     Parse game data
     
@@ -188,6 +199,8 @@ def clean_up_sales_data(game_data, genres,
     }
     
     df = pd.DataFrame(game_data['price_history'])
+    if vendor_name!=False:
+        df=df[np.isfinite(df[vendor_name])][[vendor_name, 'date']]
     if verbose:
         print 'Processing %s, %s, %d records' % (game_data['name'], 
                                                  str(release_date.strftime('%Y-%m-%d')),
@@ -217,6 +230,7 @@ def clean_up_sales_data(game_data, genres,
     # stack vendors
     df = df.set_index('date').stack().reset_index()
     df.columns = ['date', 'vendor', 'price']
+
     # create a # weeks from release date field
     df['weeks_from_release']=df.date.apply(lambda d: (d-release_date).days/7)
     # aggregation: for each week, return lowest price, across all vendors, all days
