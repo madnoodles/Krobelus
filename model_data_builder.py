@@ -3,6 +3,7 @@ from dateutil.parser import parse
 from numpy import nan
 import pandas as pd
 import math
+import json
 import re
 from optparse import OptionParser
 
@@ -35,6 +36,7 @@ col_data = db.model_data
 
 df = pd.read_csv('./mappings/genres.csv')
 genre_map = df.set_index('genre').genre_standard.T.to_dict()
+publisher_mapper = json.loads(open('mappings/publisher_mapper.json','r').read())
 
 def main():
     
@@ -151,7 +153,8 @@ def clean_up_sales_data(game_data, genres,
     """
     name = game_data['name']
     release_date = game_data['release_date']
-    publisher_str = ','.join(game_data['publisher'])
+    publishers_refine = map_publisher(game_data['publisher'])
+    publisher_str = ','.join(publishers_refine)
     try:
         score = float(game_data['score'])
     except TypeError:
@@ -177,7 +180,7 @@ def clean_up_sales_data(game_data, genres,
         'score':score,
         'meta_score':meta_score,
         'user_review_score':user_review_score,
-        'publisher':game_data['publisher'],
+        'publisher':publishers_refine,
         'platform':game_data['platforms'],
         #'developer':game_data['developer'],
         'dsct_propensity': 0,
@@ -270,6 +273,15 @@ def clean_up_sales_data(game_data, genres,
         
         return agg
 
+
+def map_publisher(publishers):
+    publishers_refine = []
+    for publisher in publishers:
+        if publisher in publisher_mapper.keys():
+            publishers_refine.append(publisher_mapper[publisher]['name'])
+        else:
+            publishers_refine.append('small_publisher')
+    return publishers_refine
 
 if __name__ == '__main__':
     main()
