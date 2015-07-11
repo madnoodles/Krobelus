@@ -7,6 +7,7 @@ import re
 from optparse import OptionParser
 
 from utils.mongo_conn import get_mongo_connection
+from model_genre import add_primary_genre
 
 # only include games release at lease N days ago
 RECENT_RELEASE_MIN_DAYS = 60
@@ -123,6 +124,7 @@ def main():
         discount_cols = [c for c in df.columns if 'dsct' in c and c != 'dsct_propensity']
         all_metadata =  [c for c in df.columns if c not in genre_cols and c not in discount_cols]
         dataset = df[all_metadata + discount_cols + genre_cols]
+        dataset = add_primary_genre(dataset)
         print '----'*10
         print '-- generating ./samples/sample_model_dataset.csv'
         dataset.to_csv('./samples/sample_model_dataset.csv')
